@@ -1,1 +1,4 @@
 app/data/*.xlsx
+.env
+.env.*
+!.env.example
