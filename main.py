@@ -13,13 +13,20 @@ FastAPI basics:
 import logging
 import os
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from services.arxiv_service import ArxivService
 from services.pdf_extraction_service import PdfExtractionService
 from services.affiliation_llm_service import AffiliationLlmService
+from services.geocoding_service import GeocodingService
 from models.arxiv import ArxivQueryResponse
-from models.affiliation import PaperAffiliations
+from models.affiliation import (
+    PaperAffiliations,
+    GeocodedPaper,
+    GeocodingMetadata,
+    PaperAuthor
+)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -38,6 +45,7 @@ logger = logging.getLogger(__name__)
 arxiv_service: ArxivService = None
 pdf_service: PdfExtractionService = None
 llm_service: AffiliationLlmService = None
+geocoding_service: GeocodingService = None
 
 
 @asynccontextmanager
@@ -51,7 +59,7 @@ async def lifespan(app: FastAPI):
     - Startup: Initialize the ArxivService
     - Shutdown: Clean up resources (close HTTP client)
     """
-    global arxiv_service, pdf_service, llm_service
+    global arxiv_service, pdf_service, llm_service, geocoding_service
 
     # STARTUP
     logger.info("Starting up application...")
@@ -74,6 +82,9 @@ async def lifespan(app: FastAPI):
         model="gpt-4o-mini"  # Cost-effective model for testing
     )
 
+    # Initialize geocoding service (no API key needed for Nominatim)
+    geocoding_service = GeocodingService(user_agent="arxiv-globe-backend")
+
     logger.info("Application startup complete")
 
     yield  # Application runs here
@@ -89,12 +100,26 @@ async def lifespan(app: FastAPI):
 # Create the FastAPI application
 # This is like creating a Spring Boot application context
 app = FastAPI(
-    title="arXiv Explorer API",
-    description="API for exploring arXiv papers and author affiliations",
+    title="arXiv Globe Visualization API",
+    description="API for extracting and geocoding arXiv paper affiliations for globe visualization",
     version="0.1.0",
     lifespan=lifespan  # Register startup/shutdown logic
 )
 
+# Configure CORS for frontend access
+# In development, allow all origins. In production, restrict to specific domains.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # TODO: Restrict in production to your frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ============================================================================
+# PRODUCTION ENDPOINTS
+# ============================================================================
 
 @app.get("/")
 async def root():
@@ -105,8 +130,10 @@ async def root():
     You'll see a simple JSON response.
     """
     return {
-        "message": "arXiv Explorer API",
-        "docs": "Visit /docs for interactive API documentation"
+        "message": "arXiv Globe Visualization API",
+        "version": "0.1.0",
+        "docs": "Visit /docs for interactive API documentation",
+        "main_endpoint": "/papers/by-category"
     }
 
 
@@ -174,6 +201,118 @@ async def explore_recent_papers(
         logger.error(f"Error fetching papers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/papers/by-category", response_model=GeocodedPaper)
+async def get_paper_by_category(
+    category: str = "cs.AI",
+    index: int = 0
+):
+    """
+    Get a single geocoded paper from a category by index.
+
+    This endpoint is designed for stateless polling from the frontend.
+    The frontend requests papers one at a time as needed for visualization.
+
+    Args:
+        category: arXiv category (e.g., "cs.AI", "cond-mat", "hep-th")
+        index: Zero-based index of paper to retrieve (0 = most recent)
+
+    Returns:
+        Single paper with geocoded affiliations
+
+    Workflow:
+        1. Frontend requests paper 0 → processes → animates
+        2. When ready, requests paper 1 → processes → animates
+        3. Continues until no more papers
+
+    Example categories:
+        - cs.AI: Artificial Intelligence
+        - cs.LG: Machine Learning
+        - cond-mat: Condensed Matter Physics
+        - cond-mat.str-el: Strongly Correlated Electrons
+        - hep-th: High Energy Physics - Theory
+        - math.CO: Combinatorics
+        - q-bio.NC: Neurons and Cognition
+
+    Try it:
+        http://localhost:8000/papers/by-category?category=cs.AI&index=0
+        http://localhost:8000/papers/by-category?category=cond-mat&index=1
+    """
+    if index < 0:
+        raise HTTPException(status_code=400, detail="index must be >= 0")
+
+    try:
+        logger.info(f"Fetching paper {index} from category {category}")
+
+        # Fetch single paper using start parameter
+        # arXiv's start parameter is 0-indexed, perfect for our use case
+        result = await arxiv_service.search_papers(
+            query=f"cat:{category}",
+            start=index,
+            max_results=1,
+            sort_by="submittedDate",
+            sort_order="descending"
+        )
+
+        if not result.papers:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No paper found at index {index} for category {category}"
+            )
+
+        paper = result.papers[0]
+        logger.info(f"Processing paper: {paper.arxiv_id} - {paper.title}")
+
+        # Step 1: Download PDF
+        pdf_bytes = await pdf_service.download_pdf(paper.arxiv_id)
+
+        # Step 2: Extract text from first page
+        text = pdf_service.extract_first_page_text(pdf_bytes)
+
+        # Step 3: Parse affiliations with LLM
+        affiliations_result = llm_service.parse_affiliations(text)
+
+        # Step 4: Geocode affiliations
+        geocoded_affiliations = geocoding_service.geocode_affiliations(
+            affiliations_result.affiliations
+        )
+
+        # Build response
+        geocoded_count, total_count = geocoding_service.get_geocoded_count(
+            geocoded_affiliations
+        )
+
+        logger.info(
+            f"Paper processed: {geocoded_count}/{total_count} affiliations geocoded"
+        )
+
+        return GeocodedPaper(
+            arxiv_id=paper.arxiv_id,
+            title=paper.title,
+            authors=[PaperAuthor(name=a.name) for a in paper.authors],
+            abstract=paper.abstract,
+            published=paper.published,
+            categories=paper.categories,
+            affiliations=geocoded_affiliations,
+            metadata=GeocodingMetadata(
+                index=index,
+                category=category,
+                total_affiliations=total_count,
+                geocoded_affiliations=geocoded_count,
+                has_more=index + 1 < result.total_results
+            )
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing paper: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# DEBUG & EXPLORATION ENDPOINTS
+# ============================================================================
 
 @app.get("/debug/raw")
 async def debug_raw_response(arxiv_id: str = "2301.00001"):
@@ -310,6 +449,87 @@ async def debug_parse_affiliations(arxiv_id: str = "2510.26584"):
 
     except Exception as e:
         logger.error(f"Error in full pipeline: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/debug/geocode-affiliations", response_model=PaperAffiliations)
+async def debug_geocode_affiliations(arxiv_id: str = "2510.26584"):
+    """
+    Debug endpoint to test the complete pipeline: PDF → LLM → Geocoding.
+
+    This endpoint:
+    1. Downloads the PDF from arXiv
+    2. Extracts text from first page
+    3. Sends text to LLM for affiliation extraction
+    4. Geocodes all affiliations to coordinates
+    5. Returns structured JSON with affiliations and coordinates
+    6. Prints details to console
+
+    Use this to verify the entire pipeline works including geocoding.
+
+    Args:
+        arxiv_id: arXiv paper ID (e.g., "2510.26584")
+
+    Returns:
+        PaperAffiliations with geocoded coordinates
+
+    Try it:
+        http://localhost:8000/debug/geocode-affiliations?arxiv_id=2510.26584
+    """
+    try:
+        logger.info(f"Debug: Full pipeline with geocoding for {arxiv_id}")
+
+        # Step 1: Download PDF
+        logger.info("Step 1: Downloading PDF...")
+        pdf_bytes = await pdf_service.download_pdf(arxiv_id)
+
+        # Step 2: Extract text
+        logger.info("Step 2: Extracting text from first page...")
+        text = pdf_service.extract_first_page_text(pdf_bytes)
+
+        # Step 3: Parse with LLM
+        logger.info("Step 3: Parsing affiliations with LLM...")
+        affiliations_result = llm_service.parse_affiliations(text)
+
+        # Step 4: Geocode affiliations
+        logger.info("Step 4: Geocoding affiliations...")
+        geocoded_affiliations = geocoding_service.geocode_affiliations(
+            affiliations_result.affiliations
+        )
+
+        # Update the result with geocoded data
+        affiliations_result.affiliations = geocoded_affiliations
+
+        # Print results to console
+        print("\n" + "=" * 80)
+        print(f"GEOCODED AFFILIATION RESULTS FOR: {arxiv_id}")
+        print("=" * 80)
+
+        geocoded_count, total_count = geocoding_service.get_geocoded_count(geocoded_affiliations)
+        print(f"Total affiliations: {total_count}")
+        print(f"Successfully geocoded: {geocoded_count} ({geocoded_count/total_count*100:.1f}%)")
+        print()
+
+        for i, affiliation in enumerate(geocoded_affiliations, 1):
+            print(f"{i}. {affiliation.institution}")
+            print(f"   Address: {affiliation.address}")
+            print(f"   Country: {affiliation.country}")
+            if affiliation.geocoded:
+                print(f"   Coordinates: ({affiliation.latitude:.4f}, {affiliation.longitude:.4f}) ✓")
+            else:
+                print(f"   Coordinates: Not geocoded ✗")
+            print()
+
+        if affiliations_result.notes:
+            print(f"Notes: {affiliations_result.notes}")
+
+        print("=" * 80 + "\n")
+
+        logger.info("Full pipeline with geocoding completed successfully")
+        return affiliations_result
+
+    except Exception as e:
+        logger.error(f"Error in full pipeline with geocoding: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -13,6 +13,7 @@ Build a system to extract institutional affiliations from arXiv papers for geogr
 - **Build Tool:** uv (dependency management)
 - **PDF Processing:** PyMuPDF (fitz)
 - **LLM Integration:** OpenAI client (via LiteLLM proxy)
+- **Geocoding:** geopy with Nominatim (OpenStreetMap)
 - **Data Validation:** Pydantic models
 
 ## Architecture
@@ -24,6 +25,7 @@ The system follows a layered service architecture (similar to Spring Boot):
 1. **ArxivService** (`services/arxiv_service.py`)
    - Queries arXiv API for paper metadata
    - Searches by category, query, or recent papers
+   - Supports pagination via `start` parameter
    - Returns structured paper information (title, authors, abstract, arxiv_id)
 
 2. **PdfExtractionService** (`services/pdf_extraction_service.py`)
@@ -36,6 +38,12 @@ The system follows a layered service architecture (similar to Spring Boot):
    - Parses institutional affiliations using structured prompts
    - Returns list of unique affiliations (institution, address, country)
 
+4. **GeocodingService** (`services/geocoding_service.py`)
+   - Converts addresses to latitude/longitude coordinates
+   - Uses Nominatim (OpenStreetMap) geocoder via geopy
+   - Rate-limited to 1 request/second (Nominatim policy)
+   - Graceful error handling for failed geocoding
+
 ### Models Layer
 
 1. **ArxivModels** (`models/arxiv.py`)
@@ -44,16 +52,25 @@ The system follows a layered service architecture (similar to Spring Boot):
    - `ArxivQueryResponse` - API response wrapper
 
 2. **AffiliationModels** (`models/affiliation.py`)
-   - `Affiliation` - Institution with location data
+   - `Affiliation` - Institution with location data (lat/lon, geocoded flag)
    - `PaperAffiliations` - List of unique affiliations per paper
+   - `GeocodedPaper` - Complete paper response with geocoded affiliations
+   - `GeocodingMetadata` - Processing metadata (success rate, pagination)
+   - `PaperAuthor` - Simple author representation
 
-### Controller Layer
+### Controller Layer (API Endpoints)
 
-FastAPI endpoints in `main.py`:
-- `/explore/recent` - Get recent papers by category
-- `/explore/search` - Custom search queries
-- `/debug/extract-pdf` - Test PDF text extraction
-- `/debug/parse-affiliations` - Test full pipeline (PDF + LLM)
+**Production Endpoints:**
+- `GET /` - Health check and API info
+- `GET /papers/by-category` - **Main endpoint** - Get single geocoded paper by category and index
+
+**Debug/Exploration Endpoints:**
+- `GET /explore/recent` - Get recent papers by category (metadata only)
+- `GET /explore/search` - Custom arXiv search queries
+- `GET /debug/raw` - View raw arXiv XML response
+- `GET /debug/extract-pdf` - Test PDF text extraction
+- `GET /debug/parse-affiliations` - Test LLM affiliation parsing
+- `GET /debug/geocode-affiliations` - Test full pipeline with geocoding
 
 ## Key Design Decisions
 
@@ -88,45 +105,71 @@ FastAPI endpoints in `main.py`:
 - OpenAI client compatible
 - Low temperature (0.1) for consistent parsing
 
+**geopy with Nominatim:**
+- Free, no API key required
+- Good for academic/research projects
+- Simple query building (address + country works best)
+- Respects rate limits automatically
+
+### API Architecture: Stateless Polling
+
+**Why no database/queue?**
+- MVP focuses on simplicity
+- Single-user application
+- Frontend controls pace via polling
+- Natural rate limiting via geocoding (1 req/sec)
+- Processing time (~3-4s/paper) matches animation timing
+
+**How it works:**
+1. Frontend requests paper by category and index
+2. Backend processes paper (PDF → LLM → Geocoding)
+3. Returns geocoded paper
+4. Frontend animates, then requests next paper when ready
+5. Repeat until no more papers
+
 ## Data Flow
 
 ```
-1. User queries arXiv API
+Frontend Request
    ↓
-2. Get paper metadata (ArxivService)
+1. Query arXiv API by category + index (ArxivService)
    ↓
-3. Download PDF for each paper (PdfExtractionService)
+2. Download PDF (PdfExtractionService)
    ↓
-4. Extract first page text (PdfExtractionService)
+3. Extract first page text (PdfExtractionService)
    ↓
-5. Send to LLM for affiliation parsing (AffiliationLlmService)
+4. Parse affiliations with LLM (AffiliationLlmService)
    ↓
-6. Return structured affiliations (institution, address, country)
+5. Geocode addresses to coordinates (GeocodingService)
    ↓
-7. [Future] Geocode affiliations to coordinates
+6. Return GeocodedPaper response
    ↓
-8. [Future] Visualize on globe
+Frontend renders on globe
 ```
 
 ## Current Status
 
-✅ **Completed:**
-- arXiv API integration
+✅ **MVP Complete:**
+- arXiv API integration with pagination
 - PDF download and text extraction
 - LLM-based affiliation parsing
-- Structured data models
+- Geocoding service (geopy + Nominatim)
+- Stateless polling API (`/papers/by-category`)
+- Structured Pydantic models
 - Debug endpoints for testing
 
-🔄 **In Progress:**
-- Testing and validation
+🎯 **Ready for Frontend:**
+- Backend is production-ready for MVP
+- Single endpoint handles complete pipeline
+- Natural rate limiting via geocoding
+- Frontend can control pace via polling
 
-⏳ **TODO:**
-- Geocoding service (convert addresses to coordinates)
-- Database storage for processed papers
-- Orchestrator service to coordinate full pipeline
-- Production endpoint for processing multiple papers
-- Deployment to GCP as lambda function
-- Scheduled daily execution
+⏳ **Future Enhancements:**
+- Database caching for processed papers
+- Alternative geocoding providers (Google Maps, OpenCage)
+- Batch processing endpoint
+- Deployment to GCP Cloud Run
+- CORS configuration for production frontend
 
 ## Environment Setup
 
