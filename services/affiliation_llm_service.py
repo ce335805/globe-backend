@@ -41,7 +41,7 @@ class AffiliationLlmService:
             model: Model to use (default: gpt-4o-mini for cost efficiency)
 
         Note: OpenAI client is configured to use custom base_url,
-              so it works with LiteLLM proxy seamlessly.
+              so it works with LiteLLM proxy
         """
         self.client = OpenAI(
             api_key=api_key,
@@ -115,11 +115,6 @@ class AffiliationLlmService:
     def _build_prompt(self, pdf_text: str, paper_title: str = "") -> str:
         """
         Build the prompt for the LLM.
-
-        This is crucial! The prompt defines:
-        - What to extract
-        - Output format (JSON)
-        - How to handle edge cases
 
         Args:
             pdf_text: Text from first page
