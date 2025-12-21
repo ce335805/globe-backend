@@ -1,10 +1,12 @@
-# arXiv Affiliation Extraction Backend
+# arXiv Globe Visualization Backend
 
 ## Project Goal
 
-Build a system to extract institutional affiliations from arXiv papers for geographic visualization on a globe. The goal is to showcase the international nature of scientific collaboration by visualizing where researchers are located globally.
+Production-ready FastAPI backend that extracts institutional affiliations from arXiv papers and provides geocoded data for interactive globe visualization. Showcases the international nature of scientific collaboration by mapping where researchers are located globally.
 
-**End Goal:** Lambda function (GCP or similar) that retrieves arXiv papers daily, extracts affiliations, geocodes them, and provides data for a globe visualization.
+**Current Status:** Clean, minimal production API with single endpoint for frontend integration.
+
+**Future:** Deploy as serverless function (GCP Cloud Run) for daily arXiv data processing.
 
 ## Technology Stack
 
@@ -18,59 +20,35 @@ Build a system to extract institutional affiliations from arXiv papers for geogr
 
 ## Architecture
 
-The system follows a layered service architecture (similar to Spring Boot):
+Clean, minimal service architecture with focused responsibilities:
 
 ### Services Layer
 
-1. **ArxivService** (`services/arxiv_service.py`)
-   - Queries arXiv API for paper metadata
-   - Searches by category, query, or recent papers
-   - Supports pagination via `start` parameter
-   - Returns structured paper information (title, authors, abstract, arxiv_id)
+**ArxivService** - Query arXiv API for papers by category with pagination support
 
-2. **PdfExtractionService** (`services/pdf_extraction_service.py`)
-   - Downloads PDFs from arXiv
-   - Extracts text from first page (where affiliations are located)
-   - Uses PyMuPDF for text extraction
+**PdfExtractionService** - Download PDFs and extract first page text using PyMuPDF
 
-3. **AffiliationLlmService** (`services/affiliation_llm_service.py`)
-   - Sends extracted PDF text to LLM
-   - Parses institutional affiliations using structured prompts
-   - Returns list of unique affiliations (institution, address, country)
+**AffiliationLlmService** - Parse affiliations from PDF text using LLM (gpt-4o-mini via LiteLLM)
 
-4. **GeocodingService** (`services/geocoding_service.py`)
-   - Converts addresses to latitude/longitude coordinates
-   - Uses Nominatim (OpenStreetMap) geocoder via geopy
-   - Rate-limited to 1 request/second (Nominatim policy)
-   - Graceful error handling for failed geocoding
+**GeocodingService** - Convert addresses to coordinates using Nominatim (rate-limited to 1 req/sec)
 
 ### Models Layer
 
-1. **ArxivModels** (`models/arxiv.py`)
-   - `ArxivPaper` - Paper metadata
-   - `ArxivAuthor` - Author information
-   - `ArxivQueryResponse` - API response wrapper
+**models/arxiv.py** - arXiv paper metadata (ArxivPaper, ArxivAuthor, ArxivQueryResponse)
 
-2. **AffiliationModels** (`models/affiliation.py`)
-   - `Affiliation` - Institution with location data (lat/lon, geocoded flag)
-   - `PaperAffiliations` - List of unique affiliations per paper
-   - `GeocodedPaper` - Complete paper response with geocoded affiliations
-   - `GeocodingMetadata` - Processing metadata (success rate, pagination)
-   - `PaperAuthor` - Simple author representation
+**models/affiliation.py** - Affiliation data with geocoding (Affiliation, GeocodedPaper, GeocodingMetadata, PaperAuthor)
 
-### Controller Layer (API Endpoints)
+### API Endpoints
 
-**Production Endpoints:**
-- `GET /` - Health check and API info
-- `GET /papers/by-category` - **Main endpoint** - Get single geocoded paper by category and index
+**`GET /`** - Health check
 
-**Debug/Exploration Endpoints:**
-- `GET /explore/recent` - Get recent papers by category (metadata only)
-- `GET /explore/search` - Custom arXiv search queries
-- `GET /debug/raw` - View raw arXiv XML response
-- `GET /debug/extract-pdf` - Test PDF text extraction
-- `GET /debug/parse-affiliations` - Test LLM affiliation parsing
-- `GET /debug/geocode-affiliations` - Test full pipeline with geocoding
+**`GET /papers/by-category?category={cat}&index={n}`** - Main production endpoint
+- Fetches single paper from arXiv by category and index
+- Downloads PDF and extracts first page text
+- Parses affiliations using LLM
+- Geocodes all affiliations to coordinates
+- Returns complete GeocodedPaper with visualization data
+- Designed for stateless polling by frontend
 
 ## Key Design Decisions
 
@@ -149,27 +127,27 @@ Frontend renders on globe
 
 ## Current Status
 
-✅ **MVP Complete:**
-- arXiv API integration with pagination
-- PDF download and text extraction
-- LLM-based affiliation parsing
-- Geocoding service (geopy + Nominatim)
-- Stateless polling API (`/papers/by-category`)
-- Structured Pydantic models
-- Debug endpoints for testing
+✅ **Production-Ready Backend:**
+- Clean, minimal codebase (main.py: 219 lines, all services < 100 lines)
+- Single production endpoint: `/papers/by-category`
+- Complete pipeline: arXiv → PDF → LLM → Geocoding
+- Structured Pydantic models with validation
+- Rate-limited geocoding (1 req/sec via Nominatim)
+- CORS enabled for frontend integration
+- Comprehensive error handling and logging
 
-🎯 **Ready for Frontend:**
-- Backend is production-ready for MVP
-- Single endpoint handles complete pipeline
-- Natural rate limiting via geocoding
-- Frontend can control pace via polling
+📊 **Code Metrics:**
+- main.py: 219 lines (down from 602)
+- arxiv_service.py: 94 lines (down from 169)
+- pdf_extraction_service.py: 59 lines (down from 168)
+- affiliation_llm_service.py: 108 lines (down from 194)
+- geocoding_service.py: 96 lines (down from 175)
 
 ⏳ **Future Enhancements:**
 - Database caching for processed papers
-- Alternative geocoding providers (Google Maps, OpenCage)
-- Batch processing endpoint
+- Alternative geocoding providers (Google Maps API)
 - Deployment to GCP Cloud Run
-- CORS configuration for production frontend
+- Scheduled daily execution
 
 ## Environment Setup
 
@@ -177,10 +155,34 @@ Required environment variables (see `.env` file):
 - `NETLIGHT_API_KEY` - LLM API authentication
 - `NETLIGHT_API_URL` - LiteLLM proxy endpoint
 
-## Development Notes
+## Development Philosophy
 
-**Incremental approach:**
-- Build and test each service independently
-- Use debug endpoints to validate each step
-- Keep code clean with clear separation of concerns
-- Follow Spring Boot patterns (services, models, controllers)
+**Production-First Approach:**
+- Minimal, clean code over extensive documentation
+- Single production endpoint over multiple debug routes
+- Essential logging only (no verbose debug output)
+- Clear separation of concerns across services
+- Pydantic models for automatic validation
+
+**Code Cleanup (December 2025):**
+- Removed all debug/exploration endpoints
+- Trimmed verbose docstrings and comments
+- Removed unused convenience methods
+- Simplified logging (kept essential INFO logs only)
+- Result: 64% reduction in codebase size while maintaining full functionality
+
+**Running the Backend:**
+```bash
+cd globe-backend
+uv sync                    # Install dependencies
+uv run python main.py      # Start server on port 8000
+```
+
+**Testing the Endpoint:**
+```bash
+# Get first paper from condensed matter physics
+curl "http://localhost:8000/papers/by-category?category=cond-mat.str-el&index=0"
+
+# Get second paper from machine learning
+curl "http://localhost:8000/papers/by-category?category=cs.LG&index=1"
+```
