@@ -4,9 +4,9 @@
 
 Production-ready FastAPI backend that extracts institutional affiliations from arXiv papers and provides geocoded data for interactive globe visualization. Showcases the international nature of scientific collaboration by mapping where researchers are located globally.
 
-**Current Status:** Clean, minimal production API with single endpoint for frontend integration.
+**Current Status:** Deployed to production on GCP Cloud Run with API key authentication.
 
-**Future:** Deploy as serverless function (GCP Cloud Run) for daily arXiv data processing.
+**Deployment:** Live at https://arxiv-globe-backend-331484945482.europe-west3.run.app
 
 ## Technology Stack
 
@@ -138,11 +138,12 @@ Three-layer defense-in-depth security architecture:
 - **Response:** Returns HTTP 429 when limit exceeded
 - **Testing:** test_rate_limit.py script for verification
 
-### 2. API Key Authentication (Planned)
+### 2. API Key Authentication (Implemented)
 - **Protection:** Prevents unauthorized access to backend
-- **Implementation:** Custom header validation (e.g., X-API-Key)
-- **Storage:** Environment variable for backend, Vercel environment for frontend
-- **Status:** Deferred until frontend deployment to Vercel
+- **Implementation:** Custom `X-API-Key` header validation using FastAPI dependencies
+- **Storage:** Environment variable `BACKEND_API_KEY` in both backend and frontend
+- **Architecture:** Next.js BFF (Backend-for-Frontend) pattern - API key never exposed to browser
+- **Status:** ✅ Deployed and operational
 
 ### 3. CORS Restriction (Planned)
 - **Protection:** Browser-level security against cross-origin attacks
@@ -159,16 +160,19 @@ Three-layer defense-in-depth security architecture:
 
 ## Current Status
 
-✅ **Production-Ready Backend:**
-- Clean, minimal codebase (main.py: 209 lines, all services < 100 lines)
-- Single production endpoint: `/papers/by-category`
+✅ **Deployed to Production:**
+- Clean, minimal codebase (main.py: 219 lines, all services < 100 lines)
+- Deployed to GCP Cloud Run (europe-west3 region)
+- API key authentication implemented (X-API-Key header)
+- Single production endpoint: `/papers/by-category` (requires API key)
+- Health check endpoint: `/` (rate-limited, public)
 - Complete pipeline: arXiv → PDF → LLM → Geocoding
 - Structured Pydantic models with validation
 - Rate-limited geocoding (1 req/sec via Nominatim)
-- API rate limiting (20 req/minute per IP)
+- API rate limiting (20 req/minute per IP on protected endpoint, 60 req/minute on health check)
 - CORS enabled for frontend integration
 - Comprehensive error handling and logging
-- Test suite for rate limiting verification
+- Docker containerized with multi-stage builds
 
 📊 **Code Metrics:**
 - main.py: 219 lines (down from 602)
@@ -177,49 +181,192 @@ Three-layer defense-in-depth security architecture:
 - affiliation_llm_service.py: 108 lines (down from 194)
 - geocoding_service.py: 96 lines (down from 175)
 
-⏳ **Next Steps:**
-- Deploy to GCP Cloud Run
-- Implement API key authentication
-- Restrict CORS to Vercel domain
+⏳ **Future Enhancements:**
+- Restrict CORS to Vercel domain (once frontend deployed)
 - Database caching for processed papers
-- Alternative geocoding providers (Google Maps API)
-- Scheduled daily execution
+- Alternative geocoding providers (Google Maps API for higher rate limits)
+- Scheduled daily execution for batch processing
+- Secret Manager integration for enhanced security
 
 ## Deployment
 
-### GCP Cloud Run Architecture
+### Production Deployment on GCP Cloud Run
 
-**Why Cloud Run over pure serverless (Vercel Functions)?**
-- Backend is functionally stateless but has infrastructure optimizations
-- Rate limiter state and connection pooling benefit from persistent containers
-- Cloud Run provides serverless benefits with container advantages
-- Better suited for geocoding requirements (1 req/sec Nominatim limit)
+**Service URL:** https://arxiv-globe-backend-331484945482.europe-west3.run.app
 
-**Advantages:**
-- **No code changes:** Current architecture works as-is
-- **Serverless benefits:** Scales to zero, pay-per-request pricing
-- **Longer timeouts:** 60-minute request timeout (vs 10s on Vercel)
-- **Cost-effective:** $0-1/month for low traffic
-- **Container-based:** Full control over runtime environment
+**Deployment Date:** December 24, 2024
 
-**Cold Start Trade-off:**
-- After ~15 minutes of inactivity, container scales to zero
-- Cold start adds ~2-5 seconds to first request (total 5-9s vs normal 3-4s)
-- Acceptable for portfolio/demo use case
-- Mitigation options: minimum instances ($10-15/month) or scheduled warming
+**Configuration:**
+- **Project:** arxiv-globe-backend
+- **Region:** europe-west3 (Frankfurt, Germany)
+- **Memory:** 512 MiB
+- **CPU:** 1 vCPU
+- **Timeout:** 300 seconds (5 minutes)
+- **Min Instances:** 0 (scales to zero)
+- **Max Instances:** 10
+- **Authentication:** Public (unauthenticated) with API key validation at application level
 
-**Frontend Architecture:**
-- Frontend: Vercel (Next.js/React)
-- Backend: GCP Cloud Run (FastAPI)
-- Communication: CORS-restricted API calls with API key
+### Why Cloud Run?
 
-**Deployment Status:** Not yet deployed (requires Dockerfile and gcloud configuration)
+**Benefits over other serverless options:**
+- **Container-based:** Full control over Python environment and dependencies
+- **Long timeouts:** 300s allows for PDF processing + LLM + geocoding
+- **Scales to zero:** Cost-effective ($0-5/month expected)
+- **Persistent containers:** Rate limiter state and connection pooling work correctly
+- **Better for geocoding:** Handles 1 req/sec Nominatim rate limit gracefully
+- **No code changes:** FastAPI works as-is in container
+
+**Cold Start Behavior:**
+- After ~15 minutes idle → scales to zero
+- First request after idle: 5-9 seconds (includes container startup)
+- Subsequent requests: 3-4 seconds (normal processing time)
+
+### Deployment Process
+
+#### Prerequisites
+
+1. **Install gcloud CLI:**
+   ```bash
+   brew install google-cloud-sdk
+   ```
+
+2. **Authenticate and set up project:**
+   ```bash
+   gcloud init
+   gcloud config set project arxiv-globe-backend
+   gcloud config set run/region europe-west3
+   ```
+
+3. **Enable required APIs:**
+   ```bash
+   gcloud services enable run.googleapis.com
+   gcloud services enable artifactregistry.googleapis.com
+   gcloud services enable cloudbuild.googleapis.com
+   ```
+
+4. **Grant permissions to Cloud Build service account:**
+   ```bash
+   PROJECT_NUMBER=$(gcloud projects describe arxiv-globe-backend --format='value(projectNumber)')
+
+   gcloud projects add-iam-policy-binding arxiv-globe-backend \
+     --member=serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com \
+     --role=roles/storage.admin
+
+   gcloud projects add-iam-policy-binding arxiv-globe-backend \
+     --member=serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com \
+     --role=roles/run.admin
+
+   gcloud projects add-iam-policy-binding arxiv-globe-backend \
+     --member=serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com \
+     --role=roles/iam.serviceAccountUser
+   ```
+
+#### Deploy Command
+
+```bash
+# Generate production API key (do this once)
+openssl rand -hex 16
+
+# Deploy to Cloud Run
+gcloud run deploy arxiv-globe-backend \
+  --source . \
+  --region europe-west3 \
+  --memory 512Mi \
+  --cpu 1 \
+  --timeout 300 \
+  --min-instances 0 \
+  --max-instances 10 \
+  --allow-unauthenticated \
+  --set-env-vars BACKEND_API_KEY=YOUR_PROD_KEY,NETLIGHT_API_KEY=YOUR_LLM_KEY,NETLIGHT_API_URL=https://llm-proxy.edgez.live/
+```
+
+**What this does:**
+1. Uploads source code to Cloud Build (respects `.gcloudignore`)
+2. Builds Docker image using `Dockerfile`
+3. Pushes image to Artifact Registry
+4. Deploys to Cloud Run with specified configuration
+5. Sets environment variables as secrets
+
+**Build time:** 2-5 minutes
+
+#### Testing the Deployment
+
+**Health check (no auth required):**
+```bash
+curl https://arxiv-globe-backend-331484945482.europe-west3.run.app/
+```
+
+**Protected endpoint (requires API key):**
+```bash
+curl -H "X-API-Key: YOUR_PROD_KEY" \
+  "https://arxiv-globe-backend-331484945482.europe-west3.run.app/papers/by-category?category=cs.AI&index=0"
+```
+
+### Docker Configuration
+
+**Multi-stage Dockerfile:**
+- **Stage 1 (builder):** Install dependencies with uv
+- **Stage 2 (runtime):** Copy only what's needed, run as non-root user
+
+**Key features:**
+- Python 3.13-slim base image
+- uv package manager for fast dependency installation
+- Virtual environment copied from builder stage
+- Non-root user (appuser) for security
+- Health check endpoint configured
+- Optimized for layer caching
+
+**Files:**
+- `Dockerfile` - Multi-stage build configuration
+- `.dockerignore` - Excludes unnecessary files (saves upload time)
+- `.gcloudignore` - Controls what gets uploaded to Cloud Build
+
+### Cost Estimates
+
+**Expected monthly cost:** $0-5
+
+**Breakdown:**
+- Cloud Run: Free tier covers 2M requests/month
+- Artifact Registry: Free tier covers 0.5 GB storage
+- Cloud Build: Free tier covers 120 build-minutes/day
+- Networking: Minimal egress charges
+
+**For portfolio/demo use:** Likely stays within free tier
+
+### Monitoring
+
+**View logs:**
+```bash
+gcloud run services logs read arxiv-globe-backend --region europe-west3
+```
+
+**View service details:**
+```bash
+gcloud run services describe arxiv-globe-backend --region europe-west3
+```
+
+**Cloud Console:**
+https://console.cloud.google.com/run?project=arxiv-globe-backend
 
 ## Environment Setup
 
-Required environment variables (see `.env` file):
+### Local Development
+
+Required environment variables (`.env` file):
+```bash
+BACKEND_API_KEY=dev_key_12345  # API key for authentication
+NETLIGHT_API_KEY=sk-xxx        # LLM API authentication
+NETLIGHT_API_URL=https://...    # LiteLLM proxy endpoint
+```
+
+### Production (Cloud Run)
+
+Set via `--set-env-vars` flag in deployment command:
+- `BACKEND_API_KEY` - Production API key (generate with `openssl rand -hex 16`)
 - `NETLIGHT_API_KEY` - LLM API authentication
 - `NETLIGHT_API_URL` - LiteLLM proxy endpoint
+
+**Alternative:** Use Google Secret Manager for enhanced security (see deployment section)
 
 ## Development Philosophy
 
@@ -246,18 +393,32 @@ uv run python main.py      # Start server on port 8000
 
 **Testing the Endpoint:**
 ```bash
-# Get first paper from condensed matter physics
-curl "http://localhost:8000/papers/by-category?category=cond-mat.str-el&index=0"
+# Health check (no API key required)
+curl "http://localhost:8000/"
 
-# Get second paper from machine learning
-curl "http://localhost:8000/papers/by-category?category=cs.LG&index=1"
+# Protected endpoint without API key (should fail with 401)
+curl "http://localhost:8000/papers/by-category?category=cs.AI&index=0"
+
+# Protected endpoint with API key (should succeed)
+curl -H "X-API-Key: dev_key_12345" \
+  "http://localhost:8000/papers/by-category?category=cond-mat.str-el&index=0"
+```
+
+**Testing Production Deployment:**
+```bash
+# Health check
+curl https://arxiv-globe-backend-331484945482.europe-west3.run.app/
+
+# Get paper with API key
+curl -H "X-API-Key: YOUR_PROD_KEY" \
+  "https://arxiv-globe-backend-331484945482.europe-west3.run.app/papers/by-category?category=cs.AI&index=0"
 ```
 
 **Testing Rate Limiting:**
 ```bash
-# Run rate limit test (makes 25 requests, expects 20 to succeed)
+# Local testing
 uv run python test_rate_limit.py
 
-# Test against deployed service
-uv run python test_rate_limit.py https://your-cloud-run-url.run.app
+# Production testing
+uv run python test_rate_limit.py https://arxiv-globe-backend-331484945482.europe-west3.run.app
 ```

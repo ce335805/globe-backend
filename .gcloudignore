@@ -1,0 +1,131 @@
+# This file specifies files that are *not* uploaded to Google Cloud
+# using gcloud. It follows the same syntax as .gitignore, with the addition of
+# "#!include" directives (which insert the entries of the given .gitignore-style
+# file at that point).
+#
+# For more information, run:
+#   $ gcloud topic gcloudignore
+
+# ============================================================================
+# Git and Version Control
+# ============================================================================
+.git/
+.gitignore
+.gitattributes
+
+# ============================================================================
+# Environment Files (contains secrets - NEVER upload)
+# ============================================================================
+.env
+.env.*
+!.env.example
+
+# ============================================================================
+# Python
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ============================================================================
+# Virtual Environments (local only - Docker creates its own)
+# ============================================================================
+venv/
+env/
+ENV/
+.venv/
+.uv/
+
+# ============================================================================
+# IDEs and Editors
+# ============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+*.iws
+
+# ============================================================================
+# Claude Code and AI Tools
+# ============================================================================
+.claude/
+
+# ============================================================================
+# Testing
+# ============================================================================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+test_*.py
+*_test.py
+
+# ============================================================================
+# Type Checking and Linting
+# ============================================================================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pylint.d/
+
+# ============================================================================
+# Documentation (optional - saves upload time)
+# ============================================================================
+README.md
+LICENSE
+Claude.md
+CLAUDE.md
+*.md
+docs/
+
+# ============================================================================
+# Temporary and Log Files
+# ============================================================================
+*.log
+*.tmp
+*.bak
+.cache/
+*.pdf
+
+# ============================================================================
+# Python Version Management
+# ============================================================================
+.python-version
+
+# ============================================================================
+# Docker (already in repo, but not needed for Cloud Build)
+# ============================================================================
+.dockerignore
+
+# ============================================================================
+# IMPORTANT: Explicitly INCLUDE files needed for Docker build
+# These override any exclusions above
+# ============================================================================
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!main.py
+!models/
+!services/

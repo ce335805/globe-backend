@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# Environment files (secrets should not be in image)
+.env
+.env.local
+.env.*.local
+.example-env
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+README.md
+Claude.md
+CLAUDE.md
+LICENSE
+*.md
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+test_*.py
+*_test.py
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Python version management
+.python-version
+
+# Misc
+.DS_Store
+*.log
