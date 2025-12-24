@@ -7,7 +7,7 @@ with institutional affiliations for globe visualization.
 
 import logging
 import os
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -41,6 +41,24 @@ arxiv_service: ArxivService = None
 pdf_service: PdfExtractionService = None
 llm_service: AffiliationLlmService = None
 geocoding_service: GeocodingService = None
+
+
+def verify_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
+    """Verify API key from X-API-Key header."""
+    expected_key = os.getenv("BACKEND_API_KEY")
+    if not expected_key:
+        logger.error("BACKEND_API_KEY not configured in environment")
+        raise HTTPException(
+            status_code=500,
+            detail="API key validation not configured"
+        )
+    if x_api_key != expected_key:
+        logger.warning(f"Invalid API key attempt from header")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key"
+        )
+    return x_api_key
 
 
 @asynccontextmanager
@@ -96,7 +114,8 @@ app.add_middleware(
 
 
 @app.get("/")
-async def root():
+@limiter.limit("60/minute")
+async def root(request: Request):
     """Root endpoint - health check."""
     return {
         "message": "arXiv Globe Visualization API",
@@ -110,7 +129,8 @@ async def root():
 async def get_paper_by_category(
     request: Request,
     category: str = "cs.AI",
-    index: int = 0
+    index: int = 0,
+    api_key: str = Depends(verify_api_key)
 ):
     """
     Get a single geocoded paper from a category by index.

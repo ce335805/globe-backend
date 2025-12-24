@@ -17,6 +17,8 @@ Production-ready FastAPI backend that extracts institutional affiliations from a
 - **LLM Integration:** OpenAI client (via LiteLLM proxy)
 - **Geocoding:** geopy with Nominatim (OpenStreetMap)
 - **Data Validation:** Pydantic models
+- **Rate Limiting:** slowapi (per-IP request throttling)
+- **Deployment Target:** GCP Cloud Run (serverless containers)
 
 ## Architecture
 
@@ -125,16 +127,48 @@ Frontend Request
 Frontend renders on globe
 ```
 
+## Security
+
+Three-layer defense-in-depth security architecture:
+
+### 1. Rate Limiting (Implemented)
+- **Per-IP throttling:** 20 requests/minute using slowapi
+- **Protection:** Prevents DDoS attacks and API abuse
+- **Implementation:** In-memory rate limiting with get_remote_address key function
+- **Response:** Returns HTTP 429 when limit exceeded
+- **Testing:** test_rate_limit.py script for verification
+
+### 2. API Key Authentication (Planned)
+- **Protection:** Prevents unauthorized access to backend
+- **Implementation:** Custom header validation (e.g., X-API-Key)
+- **Storage:** Environment variable for backend, Vercel environment for frontend
+- **Status:** Deferred until frontend deployment to Vercel
+
+### 3. CORS Restriction (Planned)
+- **Protection:** Browser-level security against cross-origin attacks
+- **Implementation:** FastAPI CORS middleware restricted to Vercel domain
+- **Current:** Wide open (allow_origins=["*"]) for development
+- **Status:** Will restrict once Vercel domain is known
+- **Note:** CORS doesn't affect curl/scripts, only browser requests
+
+**Security Philosophy:**
+- Defense in depth: Multiple security layers
+- Fail secure: Each layer provides independent protection
+- Development friendly: CORS restriction doesn't block local testing with curl
+- Cost protection: Rate limiting prevents LLM credit drain
+
 ## Current Status
 
 ✅ **Production-Ready Backend:**
-- Clean, minimal codebase (main.py: 219 lines, all services < 100 lines)
+- Clean, minimal codebase (main.py: 209 lines, all services < 100 lines)
 - Single production endpoint: `/papers/by-category`
 - Complete pipeline: arXiv → PDF → LLM → Geocoding
 - Structured Pydantic models with validation
 - Rate-limited geocoding (1 req/sec via Nominatim)
+- API rate limiting (20 req/minute per IP)
 - CORS enabled for frontend integration
 - Comprehensive error handling and logging
+- Test suite for rate limiting verification
 
 📊 **Code Metrics:**
 - main.py: 219 lines (down from 602)
@@ -143,11 +177,43 @@ Frontend renders on globe
 - affiliation_llm_service.py: 108 lines (down from 194)
 - geocoding_service.py: 96 lines (down from 175)
 
-⏳ **Future Enhancements:**
+⏳ **Next Steps:**
+- Deploy to GCP Cloud Run
+- Implement API key authentication
+- Restrict CORS to Vercel domain
 - Database caching for processed papers
 - Alternative geocoding providers (Google Maps API)
-- Deployment to GCP Cloud Run
 - Scheduled daily execution
+
+## Deployment
+
+### GCP Cloud Run Architecture
+
+**Why Cloud Run over pure serverless (Vercel Functions)?**
+- Backend is functionally stateless but has infrastructure optimizations
+- Rate limiter state and connection pooling benefit from persistent containers
+- Cloud Run provides serverless benefits with container advantages
+- Better suited for geocoding requirements (1 req/sec Nominatim limit)
+
+**Advantages:**
+- **No code changes:** Current architecture works as-is
+- **Serverless benefits:** Scales to zero, pay-per-request pricing
+- **Longer timeouts:** 60-minute request timeout (vs 10s on Vercel)
+- **Cost-effective:** $0-1/month for low traffic
+- **Container-based:** Full control over runtime environment
+
+**Cold Start Trade-off:**
+- After ~15 minutes of inactivity, container scales to zero
+- Cold start adds ~2-5 seconds to first request (total 5-9s vs normal 3-4s)
+- Acceptable for portfolio/demo use case
+- Mitigation options: minimum instances ($10-15/month) or scheduled warming
+
+**Frontend Architecture:**
+- Frontend: Vercel (Next.js/React)
+- Backend: GCP Cloud Run (FastAPI)
+- Communication: CORS-restricted API calls with API key
+
+**Deployment Status:** Not yet deployed (requires Dockerfile and gcloud configuration)
 
 ## Environment Setup
 
@@ -185,4 +251,13 @@ curl "http://localhost:8000/papers/by-category?category=cond-mat.str-el&index=0"
 
 # Get second paper from machine learning
 curl "http://localhost:8000/papers/by-category?category=cs.LG&index=1"
+```
+
+**Testing Rate Limiting:**
+```bash
+# Run rate limit test (makes 25 requests, expects 20 to succeed)
+uv run python test_rate_limit.py
+
+# Test against deployed service
+uv run python test_rate_limit.py https://your-cloud-run-url.run.app
 ```
