@@ -7,10 +7,13 @@ with institutional affiliations for globe visualization.
 
 import logging
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from services.arxiv_service import ArxivService
 from services.pdf_extraction_service import PdfExtractionService
 from services.affiliation_llm_service import AffiliationLlmService
@@ -29,6 +32,9 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# Rate limiter setup
+limiter = Limiter(key_func=get_remote_address)
 
 # Global service instances
 arxiv_service: ArxivService = None
@@ -77,6 +83,9 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -97,7 +106,9 @@ async def root():
 
 
 @app.get("/papers/by-category", response_model=GeocodedPaper)
+@limiter.limit("20/minute")
 async def get_paper_by_category(
+    request: Request,
     category: str = "cs.AI",
     index: int = 0
 ):
