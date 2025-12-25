@@ -106,10 +106,14 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://localhost:3000",           # Local development
+        "https://arxiv-globe.vercel.app",  # Production deployment
+        "https://*.vercel.app",            # Vercel preview deployments
+    ],
+    allow_credentials=False,  # Not using cookies/credentials
+    allow_methods=["GET"],    # Only GET requests needed
+    allow_headers=["X-API-Key", "Content-Type"],  # Only necessary headers
 )
 
 

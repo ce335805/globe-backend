@@ -145,11 +145,18 @@ Three-layer defense-in-depth security architecture:
 - **Architecture:** Next.js BFF (Backend-for-Frontend) pattern - API key never exposed to browser
 - **Status:** ✅ Deployed and operational
 
-### 3. CORS Restriction (Planned)
+### 3. CORS Restriction (Implemented)
 - **Protection:** Browser-level security against cross-origin attacks
-- **Implementation:** FastAPI CORS middleware restricted to Vercel domain
-- **Current:** Wide open (allow_origins=["*"]) for development
-- **Status:** Will restrict once Vercel domain is known
+- **Implementation:** FastAPI CORS middleware restricted to specific origins
+- **Allowed Origins:**
+  - `http://localhost:3000` - Local development
+  - `https://arxiv-globe.vercel.app` - Production deployment
+  - `https://*.vercel.app` - Vercel preview deployments
+- **Restrictions:**
+  - Only GET methods allowed
+  - Only X-API-Key and Content-Type headers allowed
+  - Credentials disabled (not using cookies)
+- **Status:** ✅ Deployed and operational
 - **Note:** CORS doesn't affect curl/scripts, only browser requests
 
 **Security Philosophy:**
@@ -182,7 +189,6 @@ Three-layer defense-in-depth security architecture:
 - geocoding_service.py: 96 lines (down from 175)
 
 ⏳ **Future Enhancements:**
-- Restrict CORS to Vercel domain (once frontend deployed)
 - Database caching for processed papers
 - Alternative geocoding providers (Google Maps API for higher rate limits)
 - Scheduled daily execution for batch processing
